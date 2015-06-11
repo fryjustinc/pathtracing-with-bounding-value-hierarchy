@@ -1,0 +1,490 @@
+﻿<html>
+<head>
+    <script src="lib/jquery.js"></script>
+    <script src="lib/sah.js"></script>
+    <script src="lib/ray.js"></script>
+    <script src="lib/AABB.js"></script>
+    <script src="lib/Three.js"></script>
+    <script src="lib/IntersectInfo.js"></script>
+    <script src="lib/three.min.js"></script>
+    <script src="lib/loaders/OBJMTLLoader.js"></script>
+    <script src="lib/loaders/MTLLoader.js"></script>
+    <script src="lib/loaders/XHRLoader.js"></script>
+    <script src="lib/loaders/Cache.js"></script>
+    <script type="text/javascript">
+        var loader = new THREE.OBJMTLLoader();
+        loader.load("lib/CornellBox-Sphere.obj", "lib/CornellBox-Sphere.mtl", loadMesh);
+        function Vec(x, y, z) { return new V(x, y, z); }
+        function V(x, y, z) { this.x = x; this.y = y; this.z = z; }
+        V.add = function (a, b) { return Vec(a.x + b.x, a.y + b.y, a.z + b.z); }   // overriding operators is not possible in JS
+        V.sub = function (a, b) { return Vec(a.x - b.x, a.y - b.y, a.z - b.z); }
+        V.mud = function (a, b) { return Vec(a.x * b, a.y * b, a.z * b); }
+        V.prototype.mult = function (b) { return Vec(this.x * b.x, this.y * b.y, this.z * b.z); }
+        V.prototype.norm = function () { var t = this; var il = 1 / Math.sqrt(t.x * t.x + t.y * t.y + t.z * t.z); t.x *= il; t.y *= il; t.z *= il; return t; }
+        V.prototype.dot = function (b) { return this.x * b.x + this.y * b.y + this.z * b.z; }
+        V.crs = function (a, b) { return Vec(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); }
+
+        var DIFF = 0, SPEC = 1, REFR = 2;				  // material types, used in radiance()
+        function Sphere(rad, p, e, c, refl) { return new S(rad, p, e, c, refl); }
+        function S(rad, p, e, c, refl) {
+            this.rad = rad;						  // radius
+            this.radSq = rad * rad;
+            this.eMax = Math.max(e.x, Math.max(e.y, e.z));
+            this.p = p; this.e = e; this.c = c;		  // position, emission, color
+            this.refl = refl;						// reflection type (DIFFuse, SPECular, REFRactive)
+        }
+
+        S.prototype.intersect = function (r) {
+            var op = V.sub(this.p, r.position);	
+            var t, eps = 1e-4, b = op.dot(r.direction), det = b * b - op.dot(op) + this.radSq;
+            if (det < 0) return 0; else det = Math.sqrt(det);
+            return (t = b - det) > eps ? t : ((t = b + det) > eps ? t : 0);
+        }
+        var cornell_box = [//Scene: radius, position, emission, color, material
+            Sphere(1e5, Vec(1e5 + 1, 40.8, 81.6), Vec(0, 0, 0), Vec(.75, .25, .25), DIFF),//Left
+            Sphere(1e5, Vec(-1e5 + 99, 40.8, 81.6), Vec(0, 0, 0), Vec(.25, .25, .75), DIFF),//Rght
+            Sphere(1e5, Vec(50, 40.8, 1e5), Vec(0, 0, 0), Vec(.75, .75, .75), DIFF),//Back
+            Sphere(1e5, Vec(50, 40.8, -1e5 + 170), Vec(0, 0, 0), Vec(0, 0, 0), DIFF),//Frnt
+            Sphere(1e5, Vec(50, 1e5, 81.6), Vec(0, 0, 0), Vec(.75, .75, .75), DIFF),//Botm
+            Sphere(1e5, Vec(50, -1e5 + 81.6, 81.6), Vec(0, 0, 0), Vec(.75, .75, .75), DIFF),//Top
+            Sphere(16.5, Vec(27, 16.5, 47), Vec(0, 0, 0), Vec(.99, .99, .99), SPEC),//Mirr
+            Sphere(16.5, Vec(73, 16.5, 78), Vec(0, 0, 0), Vec(.99, .99, .99), REFR),//Glas
+            //Sphere(1.5, Vec(50,81.6-16.5,81.6),V.mud(Vec(4,4,4),100),  Vec(0,0,0), DIFF),//Lite
+            Sphere(10, Vec(50, 70, 81.6), Vec(15, 15, 15), Vec(0, 0, 0), DIFF),//Lite
+            //Sphere(600, Vec(50,681.6-.27,81.6),Vec(12,12,12),   Vec(0,0,0),DIFF) //Lite
+        ];
+        var spheres = cornell_box;
+        function loadMesh(data) {
+
+            var meshlist = [];
+            var elements = [];
+            var bih = new BIH();
+                function Element(aabb, material, objectn, facen) {
+                    this.aabb = aabb;
+                    this.material = material;
+                    this.id = { object: objectn, face: facen };
+                }
+                meshlist = data.children;
+                elements = [];
+                for (k = 0; k < meshlist.length; k++) {
+                    for (l = 0; l < meshlist[k].geometry.AABB.length; l++) {
+                        elements.push(new Element(new AABB([meshlist[k].geometry.AABB[l][0].a,meshlist[k].geometry.AABB[l][0].b,meshlist[k].geometry.AABB[l][0].c], [meshlist[k].geometry.AABB[l][1].a,meshlist[k].geometry.AABB[l][1].b,meshlist[k].geometry.AABB[l][1].c]), meshlist[k].material, k, l));
+                    }
+                }
+
+                bih.buildFromArrayOfElements(elements);
+
+
+
+                function clamp(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+                function toInt(x) { return Math.floor(Math.pow(clamp(x), 1 / 2.2) * 255 + .5); }
+                function intersect(r, isc) {
+                    nrays++;
+                    var n = spheres.length, d, inf = 1e20; isc.t = 1e20;
+                    this.spheres[0]
+                    for(var i = n; i--;) if ((d = this.spheres[i].intersect(r)) && d < isc.t) { isc.t = d; isc.id = i; }
+                    return isc.t < inf;
+                }
+
+                function pathtrace(r, depth, E) {
+                  /*  bih.i.max = bih.i.mainmax;
+                    bih.i.min = bih.i.mainmin;
+                    var position = [];
+                    var direction = [];
+                    position[0] = r.position.x;
+                    position[1] = r.position.y;
+                    position[2] = r.position.z;
+                    direction[0] = r.direction.x;
+                    direction[1] = r.direction.y;
+                    direction[2] = r.direction.z;
+                    if (E == null) E = 1;*/
+                    //var inter = new intersectInfo();
+                    var isc = {t:0, id:0};
+                    if(!intersect(r,isc))
+                        return Vec(0,0,0);
+
+                  //  bih.intersect(r2, inter);
+                   // if (!inter.isHit) return Vec(0, 0, 0);
+                     var isc = { t: 0, id: 0 };					// distance to intersection
+                     if (!intersect(r, isc)) return Vec(0, 0, 0);	// if miss, return black
+                    
+                  //  var obj = inter.shape;
+                //    var t = V.sub([inter.position.a, inter.position.b, inter.position.c], r.position);
+                  //  var material = meshlist[obj.id.objectn].material;
+                   // var face = meshlist[obj.id.objectn].geometry.faces[obj.id.facen];
+                    // var normal = face.normal;
+                    var id = isc.id;
+                    var t = isc.t;
+                    var material = spheres[id];
+                    var position = V.add(r.position, V.mud(r.direction, t)), n = V.sub(position, material.p).norm(), nl = n.dot(r.direction) < 0 ? n : V.mud(n, -1);
+                    var normal = n;
+                    if (material.refl == 0) {
+                        var diffrefl = material.c;
+                        var specrefl = Vec(0,0,0);
+                        var emit = material.e;
+                        var specexp =10;
+                        var transparent = false;
+                        var speccomp, diffcomp = 0;
+                        var opacity = 1;
+                        var index = 0;
+                        var pointColor = material.e;
+                    }
+                    if (material.refl == 1) {
+
+                        var diffrefl = Vec(0,0,0);
+                        var specrefl = material.c;
+                        var emit = material.e;
+                        var specexp = 1000;
+                        var transparent = false;
+                        var speccomp, diffcomp = 0;
+                        var opacity = 1;
+                        var index = 0;
+                        var pointColor = material.e;
+                    }
+                    if (material.refl == 2) {
+                        var diffrefl = Vec(0, 0, 0);
+                        var specrefl = material.c;
+                        var emit = material.e;
+                        var specexp = 200;
+                        var transparent = true;
+                        var speccomp, diffcomp = 0;
+                        var opacity = .1;
+                        var index = 2.5;
+                        var pointColor = material.e;
+                    }
+ // set starting color to be emissive
+                    //Russian Roulette, test to see if photon dies
+                    var diffmax = diffrefl.x > diffrefl.y && diffrefl.x > diffrefl.z ? diffrefl.x : diffrefl.y > diffrefl.z ? diffrefl.y : diffrefl.z;
+                    var specmax = specrefl.x > specrefl.y && specrefl.x > specrefl.z ? specrefl.x : specrefl.y > specrefl.z ? specrefl.y : specrefl.z;
+                    var emitmax = emit.x > emit.y && emit.x > emit.z ? emit.x : emit.y > emit.z ? emit.y : emit.z;
+                    if (opacity == 1)
+                        var totalmax = emitmax > diffmax && emitmax > diffmax ? emitmax : diffmax > specmax ? diffmax : specmax;
+                    else
+                        var totalmax = 1 - opacity;
+                   /* if (E == null) E = 1;
+                    var isc = { t: 0, id: 0 };					// distance to intersection 
+                    if (!intersect(r, isc)) return Vec(0, 0, 0);	// if miss, return black
+                    var id = isc.id, t = isc.t, obj = spheres[id];	  // the hit object
+                    var x = V.add(r.position, V.mud(r.direction, t)), n = V.sub(x, obj.p).norm(), nl = n.dot(r.direction) < 0 ? n : V.mud(n, -1), f = obj.c;
+                    var p = f.x > f.y && f.x > f.z ? f.x : f.y > f.z ? f.y : f.z;			 // max refl
+                    if (++depth > 0 || !p) if (Math.random() < p && depth < 200) f = V.mud(f, (1 / p)); else return V.mud(obj.e, E); //R.R.
+                    if (isc.id == 5)
+                        var i=2;*/
+                    function diff() {  //handle diffuse refl
+                        // perform importance sampling
+                      /*  var z, phi, theta;
+                        z = Math.random();
+                        phi = Math.random() * 2 * Math.PI;
+                        theta = Math.acos(Math.sqrt(z));
+                        // Create vector aligned with z=(0,0,1)
+                        var sintheta = Math.sin(theta);
+                        var sample = Vec(sintheta * Math.cos(phi), sintheta * Math.sin(phi), z);
+                        var alignWithZ = Vec(normal.x, normal.y,normal.z);
+                        // Rotate sample to be aligned with normal
+                        var t = Vec(Math.random(), Math.random(), Math.random());
+                        var u = t.mult(alignWithZ);
+                        u.norm();
+                        var v = alignWithZ.mult(u);
+                        var alignedsample = Vec(u.x * sample.x + v.x * sample.y + alignWithZ.x * sample.z, u.y * sample.x + v.y * sample.y + alignWithZ.y * sample.z, u.z * sample.x + v.z * sample.y + alignWithZ.z * sample.z);
+                        var diffRay = new Ray(position, alignedsample);
+                        var diffColor = pathtrace(diffRay, ++depth, 1);
+                        return diffrefl * diffColor;*/
+                        var r1 = 2 * Math.PI * Math.random(),
+                            r2 = Math.random(),
+                            r2s = Math.sqrt(r2);
+                        var w = nl,
+                            u = V.crs((Math.abs(w.x) > .1 ? new V(0, 1, 0) : new V(1, 0, 0)), w).norm(),
+                            v = V.crs(w, u);
+                        var d = V.add(V.mud(u, Math.cos(r1) * r2s),
+                            V.add(V.mud(v, Math.sin(r1) * r2s),
+                            V.mud(w, Math.sqrt(1 - r2)))).norm();
+                        var e = Vec(0, 0, 0);
+                        for (var i = 0; i < spheres.length; i++) {
+                            var s = spheres[i];
+                            if (s.eMax <= 0) continue; // skip non-lights
+
+                            var sw = V.sub(s.p, x),
+                                su = V.crs((Math.abs(sw.x) > .1 ? new V(0, 1, 0) : new V(1, 0, 0)), sw).norm(),
+                                sv = V.crs(sw, su);
+                            var cos_a_max = Math.sqrt(1 - s.radSq / sw.dot(sw));
+                            var eps1 = Math.random(),
+                                eps2 = Math.random();
+                            var cos_a = 1 - eps1 + eps1 * cos_a_max;
+                            var sin_a = Math.sqrt(1 - cos_a * cos_a);
+                            var phi = 2 * Math.PI * eps2;
+                            var l = V.add(V.add(V.mud(su, Math.cos(phi) * sin_a), V.mud(sv, Math.sin(phi) * sin_a)), V.mud(sw, cos_a));
+                            l.norm();
+                            //if(l.dot(nl)<=0)continue;
+                            if (intersect(new Ray(x, l), isc) && isc.id == i) {  // shadow ray
+                                var omega = 2 * Math.PI * (1 - cos_a_max);
+                                e = V.add(e, obj.c.mult(V.mud(s.e, l.dot(nl) * omega * (1 / Math.PI))));
+                            }
+                        }
+                        //return V.add(obj.e, f.mult(radiance(Ray(position,d),depth)));
+                        return V.add(V.add(V.mud(obj.e, E), e), obj.c.mult(pathtrace(new Ray(x, d), depth, 0)));
+                    }
+                    function spec() { //handle specular refl
+                        /*var z, phi, theta;
+                        z = Math.random();
+                        phi = Math.random() * 2 * Math.PI;
+                        theta = Math.acos(Math.pow(z, 1 / (specexp + 1)));
+                        // Create vector aligned with z=(0,0,1)
+                        var sintheta = Math.sin(theta);
+                        var sample = Vec(sintheta * Math.cos(phi), sintheta * Math.sin(phi), z);
+                        var alignWithZ = Vec(normal.x, normal.y, normal.z);
+                        // Rotate sample to be aligned with normal
+                        var t = Vec(Math.random(), Math.random(), Math.random());
+                        var u = t.mult(alignWithZ);
+                        u.norm();
+                        var v = alignWithZ.mult(u);
+                        var alignedsample = Vec(u.x * sample.x + v.x * sample.y + alignWithZ.x * sample.z, u.y * sample.x + v.y * sample.y + alignWithZ.y * sample.z, u.z * sample.x + v.z * sample.y + alignWithZ.z * sample.z);
+                        var specRay = new Ray(position, alignedsample);
+                        var specColor = pathtrace(specRay, ++depth, 1);
+                        return specrefl * (alignedsample * normal) * specColor;*/
+
+                    }
+                    function mirror() {
+                        /*var mult
+                        if (opacity < 1)
+                            mult = Vec(1 - opacity, 1 - opacity, 1 - opacity);
+                        else
+                            mult = specrefl;
+                        var refldirection = r.direction - 2 * (r.direction * normal) * normal;
+                        var reflray = new Ray(position, refldirection);
+                        var reflcolor = pathtrace(reflray, ++depth, 1);
+                        return mult * reflcolor;*/
+                        return V.add(obj.e, obj.c.mult(pathtrace(new Ray(x, V.sub(r.direction, V.mud(n, 2 * n.dot(r.direction)))), depth)));
+                    }
+                    function translucent() {/*
+                        var test
+                        var mult = Vec(1 - opacity, 1 - opacity, 1 - opacity);
+                        var newnormal;
+                        var cosAngle = r.direction * normal;
+                        if (cosAngle > 0) {
+                            test = false;
+                            newnormal = -1 * normal;
+                        }
+                        else {
+                            test = true;
+                            newnormal = normal;
+                        }
+                        var n, nt;
+                        if (!test) {
+                            n = index;
+                            nt = 1;
+                        }
+                        else {
+                            n = 1;
+                            nt = index;
+                        }
+                        var nn = n / nt;
+                        var c = r.direction * newnormal;
+                        var totalRefl;
+                        var term1, refractDirection;
+                        var cosPhi2 = (1 - ((nn * nn) * (1 - (c * c))));
+                        if (cosPhi2 < 0)
+                            totalRefl = true;
+                        else {
+                            cosPhi = Math.sqrt(cosPhi2);
+                            term1 = n * (r.direction - normal * (c));
+                            refractDirection = term1 - newnormal * cosPhi;
+                            totalRefl = false;
+                        }
+                        if (totalRefl == false) {
+                            var nbig, nsmall;
+                            if (test) {
+                                nbig = n;
+                                nsmall = nt;
+                            }
+                            else {
+                                nbig = nt;
+                                nsmall = n;
+                            }
+                            var r0 = ((nbig - nsmall) / (nbig + nsmall));
+                            r0 = r0 * r0;
+                            var test2 = (r.direction * normal) < 0;
+                            var cc = 1 - (test2 ? (-r.direction * normal) : (r.direction * normal));
+                            var schlick = r0 + (1 - r0) * cc * cc * cc * cc * cc;
+                            var refrRay = new Ray(position, refractDirection)
+                            pointColor += survival * (1 - schlick) * mult * pathtrace(refrRay, ++depth);
+                            pointColor += survival * schlick * mirror();
+                        }
+                        else {
+                            pointColor += survival * mirror();
+                        }
+                        return pointColor;
+                        */
+                        var reflRay = new Ray(x, V.sub(r.direction, V.mud(n, 2 * n.dot(r.direction))));
+                        var into = n.dot(nl) > 0;
+                        var nc = 1,
+                            nt = 1.5,
+                            nnt = into ? nc / nt : nt / nc,
+                            ddn = r.direction.dot(nl),
+                            cos2t;
+                        if ((cos2t = 1 - nnt * nnt * (1 - ddn * ddn)) < 0)		  // Total internal reflection
+                            return V.add(obj.e, obj.c.mult(pathtrace(reflRay, depth)));
+                        var tdir = V.sub(V.mud(r.direction, nnt), V.mud(n, (into ? 1 : -1) * (ddn * nnt + Math.sqrt(cos2t)))).norm();
+                        var a = nt - nc,
+                            b = nt + nc,
+                            R0 = a * a / (b * b),
+                            c = 1 - (into ? -ddn : tdir.dot(n));
+                        var Re = R0 + (1 - R0) * c * c * c * c * c,
+                            Tr = 1 - Re,
+                            P = .25 + .5 * Re,
+                            RP = Re / P,
+                            TP = Tr / (1 - P);
+                        return V.add(obj.e, obj.c.mult((depth > 2 ? (Math.random() < P ?   // Russian roulette
+                            V.mud(pathtrace(reflRay, depth), RP) : V.mud(pathtrace(new Ray(x, tdir), depth), TP)) :
+                            V.add(V.mud(pathtrace(reflRay, depth), Re), V.mud(pathtrace(new Ray(x, tdir), depth), Tr)))));
+                    }
+
+                    if (obj.refl ==2)
+                        return pointcolor = translucent();
+                    else {
+                        if (obj.refl == 0)
+                            return pointColor = diff();
+                        else {
+                            if (obj.refl == 1)
+                                return pointColor = mirror();
+                            else {
+                                var p = specmax / (specmax + diffmax);
+                                var rrmult = 1 / p;
+                                if (Math.random() > p)
+                                    return pointColor += survival * (1 / (1 - 1 / rrmult)) * diff();
+
+                            }
+                        }
+                    }
+                }
+
+                function iterate() {
+                    if (cline == h) { cline = 0; niter++; }
+                    var samps = 1;
+                    var cam = new Ray(Vec(50, 52, 295.6), Vec(0, -0.042612, -1).norm()); // cam pos, dir
+                    var cx = Vec(w * .5135 / h, 0, 0), cy = V.mud(V.crs(cx, cam.direction).norm(), .5135), r = Vec(0, 0, 0);
+                    for (var y = cline; y < Math.min(cline + ssize, h) ; y++) {                       // Loop over image rows
+                        for (var x = 0; x < w; x++) {   // Loop cols
+                            var i = y * w + x;
+                            for (var sy = 0; sy < 2; sy++)      // 2x2 subpixel rows
+                                for (var sx = 0; sx < 2; sx++, r = Vec(0, 0, 0)) {  // 2x2 subpixel cols
+                                    for (var s = 0; s < samps; s++) {
+                                        var r1 = 2 * Math.random(), dx = r1 < 1 ? Math.sqrt(r1) - 1 : 1 - Math.sqrt(2 - r1);
+                                        var r2 = 2 * Math.random(), dy = r2 < 1 ? Math.sqrt(r2) - 1 : 1 - Math.sqrt(2 - r2);
+                                        var d = V.add(V.mud(cx, (((sx + .5 + dx) / 2 + x) / w - .5)),
+                                                V.add(V.mud(cy, (((sy + .5 + dy) / 2 + (h - y - 1)) / h - .5)), cam.direction));
+                                        r = V.add(r, V.mud(pathtrace(new Ray(V.add(cam.position, V.mud(d, 140)), d.norm()), 0, 1), 0.25 / samps));
+                                    }
+                                    c[3 * i] += r.x; c[3 * i + 1] += r.y; c[3 * i + 2] += r.z;
+                                }
+                        }
+                    }
+                    cline = Math.min(cline + ssize, h);
+                }
+
+                window.requestAnimFrame = (function () {
+                    return window.requestAnimationFrame ||
+                            window.webkitRequestAnimationFrame ||
+                            window.mozRequestAnimationFrame ||
+                            function (callback) {
+                                window.setTimeout(callback, 1000 / 60);
+                            };
+                })();
+
+                var w = 256, h = 192, c, niter = 0, nrays = 0, cline = 0, ssize = 16;
+                var cnv, ctx, tf, buff, imgd;
+                function go() {
+                    var spheres = cornell_box;
+                    cnv = document.getElementById("c");
+                    ctx = cnv.getContext("2d");
+
+                    rebuild();
+
+                    var ress = document.getElementById("ress");
+                    for (var i = 0; i < 6; i++) {
+                        var b = document.createElement("input");
+                        b.type = "button";
+                        b.value = 64 * Math.pow(2, i) + " x " + 48 * Math.pow(2, i);
+                        ress.appendChild(b); b.i = i;
+                        b.addEventListener("click", changeRes);
+                    }
+
+                    var scns = document.getElementById("scns");
+
+                    var stat = document.getElementById("stat");
+
+                    tf = document.createElement("span");
+                    stat.appendChild(tf);
+
+                    var gbtn = document.createElement("input");
+                    gbtn.type = "button"; gbtn.value = "Get PNG";
+                    stat.appendChild(gbtn);
+                    gbtn.addEventListener("click", getPNG);
+
+                    gbtn = document.createElement("input");
+                    gbtn.type = "button"; gbtn.value = "Get JPG";
+                    stat.appendChild(gbtn);
+                    gbtn.addEventListener("click", getJPG);
+
+                    gbtn = document.createElement("input");
+                    gbtn.type = "button"; gbtn.value = "Get WEBP";
+                    stat.appendChild(gbtn);
+                    gbtn.addEventListener("click", getWEBP);
+
+                    requestAnimFrame(onEF);
+                }
+
+                function rebuild() {
+                    c = new Float32Array(3 * w * h);
+                    buff = new Uint8Array(4 * w * h);
+                    niter = 1; nrays = 0; cline = 0;
+                    cnv.width = w; cnv.height = h;
+                    imgd = ctx.getImageData(0, 0, w, ssize);
+                }
+                function changeRes(e) {
+                    w = 64 * Math.pow(2, e.target.i); h = 48 * Math.pow(2, e.target.i);
+                    ssize = Math.min(32, 8192 / w);
+                    rebuild();
+                }
+
+                function changeScene(e) {
+                    spheres = scenes[e.target.i];
+                    rebuild();
+                }
+
+                function getPNG(e) {
+                    var dataUrl = cnv.toDataURL("image/png");
+                    window.open(dataUrl, "Rendered image", "width=" + (w + 20) + ", height=" + (h + 20));
+                }
+                function getJPG(e) {
+                    var dataUrl = cnv.toDataURL("image/jpeg");
+                    window.open(dataUrl, "Rendered image", "width=" + (w + 20) + ", height=" + (h + 20));
+                }
+                function getWEBP(e) {
+                    var dataUrl = cnv.toDataURL("image/webp");
+                    window.open(dataUrl, "Rendered image", "width=" + (w + 20) + ", height=" + (h + 20));
+                }
+
+                function onEF(e) {
+                    var time = new Date().getTime();
+                    iterate();
+                    var done = (new Date().getTime() - time);
+                    var iit = 1 / niter;
+                    var f = imgd.data;
+                    for (var i = (cline - ssize) * w, j = 0; i < cline * w; i++) {
+                        f[j++] = toInt(clamp(c[i * 3] * iit)); f[j++] = toInt(clamp(c[i * 3 + 1] * iit)); f[j++] = toInt(clamp(c[i * 3 + 2] * iit)); f[j++] = 255;
+                    }
+                    ctx.putImageData(imgd, 0, cline - ssize);
+                    tf.innerHTML = "Iteration: " + niter + ", step time: " + ("" + (done / 1000)).substring(0, 4) + ", rays: " + nrays + " - ";
+                    requestAnimFrame(onEF);
+                }
+                go();
+            }
+           </script>
+    </head>
+    <body onload="">
+        <div id="ress">Resolutions: </div>
+        <div id="scns">Scenes: </div>
+        <div id="stat"></div>
+		<canvas id="c"></canvas>
+	</body>
+</html>

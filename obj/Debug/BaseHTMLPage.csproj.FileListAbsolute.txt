@@ -1,0 +1,16 @@
+D:\Downloads\Pure HTML5 Template\bin\$safeprojectname$.dll.config
+D:\Downloads\Pure HTML5 Template\bin\$safeprojectname$.dll
+D:\Downloads\Pure HTML5 Template\bin\$safeprojectname$.pdb
+D:\Downloads\Pure HTML5 Template\obj\Debug\BaseHTMLPage.csprojResolveAssemblyReference.cache
+D:\Downloads\Pure HTML5 Template\obj\Debug\$safeprojectname$.dll
+D:\Downloads\Pure HTML5 Template\obj\Debug\$safeprojectname$.pdb
+D:\Downloads\Pure HTML5 Template\bin\lib\CornellBox-Sphere.mtl
+D:\Downloads\Pure HTML5 Template\bin\lib\CornellBox-Sphere.obj
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\bin\lib\CornellBox-Sphere.mtl
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\bin\lib\CornellBox-Sphere.obj
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\bin\$safeprojectname$.dll.config
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\bin\$safeprojectname$.dll
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\bin\$safeprojectname$.pdb
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\obj\Debug\BaseHTMLPage.csprojResolveAssemblyReference.cache
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\obj\Debug\$safeprojectname$.dll
+C:\Users\fryju_000\Desktop\Pure HTML5 Template\obj\Debug\$safeprojectname$.pdb
